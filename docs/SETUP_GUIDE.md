@@ -123,9 +123,9 @@ curl -X POST https://YOUR_N8N_HOST/webhook-test/wazuh-alert \
     "id": "1700000000.123456",
     "timestamp": "2026-09-18T12:00:00.000+0000",
     "rule": {"id": "5710", "level": 10, "description": "Multiple authentication failures", "groups": ["authentication_failures"]},
-    "agent": {"id": "001", "name": "web-server-01", "ip": "10.0.1.15"},
-    "data": {"srcip": "185.220.101.45", "srcuser": "root"},
-    "full_log": "Sep 18 12:00:00 web-server-01 sshd[1234]: Failed password for root from 185.220.101.45 port 51234 ssh2"
+    "agent": {"id": "001", "name": "web-server-01", "ip": "10.0.0.15"},
+    "data": {"srcip": "203.0.113.45", "srcuser": "root"},
+    "full_log": "Sep 18 12:00:00 web-server-01 sshd[1234]: Failed password for root from 203.0.113.45 port 51234 ssh2"
   }'
 ```
 

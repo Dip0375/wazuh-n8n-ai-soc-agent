@@ -72,7 +72,7 @@ unpatched CVE-2023-38408, severity score 90/Critical).
 ## Repository structure
 
 ```
-ai-soc-agent-n8n/
+wazuh-n8n-ai-soc-agent/
 ├── workflow/
 │   └── wazuh-ai-soc-agent.json      ← import this into n8n
 ├── integrations/
@@ -99,8 +99,8 @@ ai-soc-agent-n8n/
 
 ### Install
 ```bash
-git clone https://github.com/dipnarayannandi/ai-soc-agent-n8n.git
-cd ai-soc-agent-n8n
+git clone https://github.com/dipnarayannandi/wazuh-n8n-ai-soc-agent.git
+cd wazuh-n8n-ai-soc-agent
 cp .env.example .env   # fill in your values, then load them into n8n
 ```
 
