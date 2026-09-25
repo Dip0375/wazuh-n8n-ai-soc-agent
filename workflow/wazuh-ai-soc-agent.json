@@ -1,0 +1,1404 @@
+{
+  "name": "AI SOC Agent \u2014 Wazuh Triage, Investigation & IR Reporting",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh-alert",
+        "responseMode": "onReceived",
+        "responseData": "={\"status\":\"received\"}",
+        "options": {}
+      },
+      "id": "afc939b5-b165-41fc-bb09-795aef31bda5",
+      "name": "Wazuh Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== CONFIGURATION CENTER =====\n// Central place to tune the whole pipeline. Edit these values (or wire them\n// to n8n environment variables) instead of hunting through every node.\nconst config = {\n  severityThreshold: Number($env.SOC_SEVERITY_THRESHOLD || 7),   // Wazuh rule.level minimum to process\n  criticalThreshold: Number($env.SOC_CRITICAL_THRESHOLD || 12),  // rule.level considered auto-block eligible\n  autoBlockEnabled: ($env.SOC_AUTO_BLOCK_ENABLED || \"true\") === \"true\",\n  dedupeWindowMinutes: Number($env.SOC_DEDUPE_WINDOW_MIN || 15),\n  internalCidrs: (($env.SOC_INTERNAL_CIDRS || \"10.0.0.0/8,172.16.0.0/12,192.168.0.0/16\").split(\",\")),\n  allowlistIps: (($env.SOC_ALLOWLIST_IPS || \"\").split(\",\").filter(Boolean)),\n  criticalAssets: (($env.SOC_CRITICAL_ASSETS || \"\").split(\",\").filter(Boolean)), // agent names/IDs that must NEVER be auto-blocked\n  ollamaUrl: $env.OLLAMA_URL || \"http://localhost:11434/api/generate\",\n  ollamaModel: $env.OLLAMA_MODEL || \"llama3.1:8b\",\n  abuseIpdbEnabled: ($env.SOC_ABUSEIPDB_ENABLED || \"true\") === \"true\",\n  virusTotalEnabled: ($env.SOC_VT_ENABLED || \"true\") === \"true\",\n  wazuhApiUrl: $env.WAZUH_API_URL || \"https://localhost:55000\",\n  orgName: $env.SOC_ORG_NAME || \"Your Organization\",\n};\n\nconst items = $input.all();\nreturn items.map(item => ({ json: { ...item.json, _config: config } }));"
+      },
+      "id": "a90349aa-6a3e-4e82-bffe-01487906540a",
+      "name": "Configuration Center",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== INPUT VALIDATION =====\n// Wazuh sends alerts as raw JSON via the integratord webhook. Never trust it.\nconst items = $input.all();\nreturn items.map(item => {\n  const body = item.json;\n  const alert = body.body ? body.body : body; // handle both raw and {body:...} wrapper\n  const errors = [];\n\n  if (!alert || typeof alert !== \"object\") errors.push(\"Payload is not a JSON object\");\n  if (!alert.rule || alert.rule.level === undefined) errors.push(\"Missing rule.level\");\n  if (!alert.rule || !alert.rule.description) errors.push(\"Missing rule.description\");\n  if (!alert.id) errors.push(\"Missing alert id\");\n  if (!alert.timestamp) errors.push(\"Missing timestamp\");\n\n  return {\n    json: {\n      ...alert,\n      _config: body._config,\n      _valid: errors.length === 0,\n      _validationErrors: errors,\n    }\n  };\n});"
+      },
+      "id": "695f87f9-a572-4740-8132-adff6e41a2d8",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "7a384592-4d1a-42a3-88af-7216a004a1ff",
+              "leftValue": "={{$json._valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "2b52c5bd-3688-4726-aa21-f429da2ea4c0",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        650
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== NORMALIZE ALERT =====\n// Flattens Wazuh's nested structure into a predictable, analyst-friendly shape.\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const normalized = {\n    alertId: a.id,\n    timestamp: a.timestamp,\n    ruleId: a.rule?.id,\n    ruleLevel: a.rule?.level,\n    ruleDescription: a.rule?.description,\n    ruleGroups: a.rule?.groups || [],\n    mitreId: a.rule?.mitre?.id || [],\n    mitreTactic: a.rule?.mitre?.tactic || [],\n    mitreTechnique: a.rule?.mitre?.technique || [],\n    agentId: a.agent?.id,\n    agentName: a.agent?.name,\n    agentIp: a.agent?.ip,\n    srcIp: a.data?.srcip || a.data?.src_ip || null,\n    dstIp: a.data?.dstip || a.data?.dst_ip || null,\n    srcUser: a.data?.srcuser || a.data?.dstuser || null,\n    fileHashMd5: a.syscheck?.md5_after || null,\n    fileHashSha1: a.syscheck?.sha1_after || null,\n    fileHashSha256: a.syscheck?.sha256_after || null,\n    filePath: a.syscheck?.path || null,\n    fullLog: a.full_log || \"\",\n    location: a.location || \"\",\n    decoder: a.decoder?.name || \"\",\n    raw: a,\n  };\n  return { json: { ...normalized, _config: a._config } };\n});"
+      },
+      "id": "276c485c-9d43-401d-85c6-c5c0c60563cf",
+      "name": "Normalize Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== DEDUPLICATION =====\n// Prevents the same alert (same rule + same src IP/agent) from re-triggering\n// the full AI + notification pipeline within a rolling time window.\n// Uses n8n workflow static data as a lightweight in-memory/disk cache.\nconst staticData = $getWorkflowStaticData(\"global\");\nif (!staticData.seenAlerts) staticData.seenAlerts = {};\n\nconst items = $input.all();\nconst now = Date.now();\nconst results = [];\n\nfor (const item of items) {\n  const a = item.json;\n  const windowMs = (a._config?.dedupeWindowMinutes || 15) * 60 * 1000;\n  const key = `${a.ruleId}:${a.srcIp || a.agentId}`;\n\n  // purge expired entries occasionally\n  for (const k of Object.keys(staticData.seenAlerts)) {\n    if (now - staticData.seenAlerts[k] > windowMs) delete staticData.seenAlerts[k];\n  }\n\n  const lastSeen = staticData.seenAlerts[key];\n  const isDuplicate = lastSeen && (now - lastSeen < windowMs);\n  staticData.seenAlerts[key] = now;\n\n  results.push({ json: { ...a, _dedupeKey: key, _isDuplicate: !!isDuplicate } });\n}\nreturn results;"
+      },
+      "id": "83746950-bdb0-469e-b444-4fd27ad1e801",
+      "name": "Deduplication Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "f173f540-6ad6-4b2d-90d7-399cee7aeb66",
+              "leftValue": "={{$json._isDuplicate}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "5c22c011-ba55-4ac0-96c1-2fa93af4e62c",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3b644429-bea0-4db1-8655-08fe1950a4de",
+              "leftValue": "={{$json.ruleLevel}}",
+              "rightValue": "={{$json._config.severityThreshold}}",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a67b435e-4320-49ac-b862-22567a246f83",
+      "name": "Severity Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== IOC EXTRACTION =====\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const iocs = {\n    ips: [a.srcIp, a.dstIp].filter(Boolean),\n    hashes: [a.fileHashSha256, a.fileHashSha1, a.fileHashMd5].filter(Boolean),\n    users: [a.srcUser].filter(Boolean),\n    files: [a.filePath].filter(Boolean),\n  };\n  return { json: { ...a, _iocs: iocs } };\n});"
+      },
+      "id": "86913aad-a982-45db-ade6-15683097d841",
+      "name": "Extract IOCs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c2f3d6a2-0daa-482c-966b-e9fffa9318db",
+              "leftValue": "={{$json.srcIp}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "56abcca7-71a7-4bd1-8d99-58962bdb0868",
+      "name": "Has Source IP?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== IP REPUTATION + GEO FOOTPRINT =====\n// One combined lookup: AbuseIPDB (reputation/abuse history) + ip-api.com\n// (geolocation/ASN/ISP, no key required). Both calls are best-effort - a\n// failure in either never blocks the pipeline, it just leaves that field null.\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const a = item.json;\n  const ip = a.srcIp;\n  let abuse = null, geo = null;\n\n  if (a._config?.abuseIpdbEnabled !== false) {\n    try {\n      const resp = await this.helpers.httpRequest({\n        method: \"GET\",\n        url: \"https://api.abuseipdb.com/api/v2/check\",\n        qs: { ipAddress: ip, maxAgeInDays: 90 },\n        headers: { Key: $env.ABUSEIPDB_API_KEY, Accept: \"application/json\" },\n        json: true,\n        timeout: 8000,\n      });\n      const d = resp.data || {};\n      abuse = {\n        checked: true,\n        confidenceScore: d.abuseConfidenceScore,\n        totalReports: d.totalReports,\n        isTor: !!d.isTor,\n        usageType: d.usageType,\n        domain: d.domain,\n        lastReportedAt: d.lastReportedAt,\n      };\n    } catch (e) { abuse = { checked: false, error: String(e.message || e) }; }\n  }\n\n  try {\n    const geoResp = await this.helpers.httpRequest({\n      method: \"GET\",\n      url: `http://ip-api.com/json/${ip}`,\n      qs: { fields: \"status,message,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting\" },\n      json: true,\n      timeout: 8000,\n    });\n    if (geoResp.status === \"success\") {\n      geo = {\n        checked: true,\n        country: geoResp.country, countryCode: geoResp.countryCode,\n        region: geoResp.regionName, city: geoResp.city,\n        lat: geoResp.lat, lon: geoResp.lon, timezone: geoResp.timezone,\n        isp: geoResp.isp, org: geoResp.org, asn: geoResp.as,\n        isProxyOrVpn: !!geoResp.proxy, isHosting: !!geoResp.hosting,\n      };\n    } else {\n      geo = { checked: false };\n    }\n  } catch (e) { geo = { checked: false, error: String(e.message || e) }; }\n\n  results.push({ json: { ...a, _ipReputation: abuse || { checked: false }, _geoFootprint: geo || { checked: false } } });\n}\nreturn results;"
+      },
+      "id": "5cac138e-809f-4100-9789-b170b9a9a20c",
+      "name": "IP & Geo Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        430
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "5c6ddac2-02d9-45f1-a488-bbe96fbda1ef",
+      "name": "Merge IP Enrichment",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2420,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3e69d9ed-3fc0-46fe-9ecd-395b2f43ad67",
+              "leftValue": "={{$json.fileHashSha256 || $json.fileHashMd5}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "da034cf5-25d7-4fef-b544-ac533eeec85c",
+      "name": "Has File Hash?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== MALWARE / FILE HASH ANALYSIS =====\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const a = item.json;\n  const hash = a.fileHashSha256 || a.fileHashMd5;\n  let malware = { checked: false };\n\n  if (a._config?.virusTotalEnabled !== false) {\n    try {\n      const resp = await this.helpers.httpRequest({\n        method: \"GET\",\n        url: `https://www.virustotal.com/api/v3/files/${hash}`,\n        headers: { \"x-apikey\": $env.VIRUSTOTAL_API_KEY },\n        json: true,\n        timeout: 8000,\n      });\n      const attrs = (resp.data && resp.data.attributes) || {};\n      const stats = attrs.last_analysis_stats || {};\n      const total = (stats.malicious||0)+(stats.suspicious||0)+(stats.undetected||0)+(stats.harmless||0);\n      malware = {\n        checked: true,\n        maliciousVendors: stats.malicious || 0,\n        suspiciousVendors: stats.suspicious || 0,\n        totalVendors: total,\n        detectionRatio: total ? `${(stats.malicious||0)+(stats.suspicious||0)}/${total}` : \"n/a\",\n        fileType: attrs.type_description || attrs.type_tag || \"unknown\",\n        fileSize: attrs.size,\n        firstSubmitted: attrs.first_submission_date ? new Date(attrs.first_submission_date * 1000).toISOString() : null,\n        popularThreatClassification: attrs.popular_threat_classification?.suggested_threat_label || null,\n        knownNames: (attrs.names || []).slice(0, 5),\n        signatureVerified: attrs.signature_info ? \"signed\" : \"unsigned\",\n      };\n    } catch (e) { malware = { checked: false, error: String(e.message || e) }; }\n  }\n\n  results.push({ json: { ...a, _malwareAnalysis: malware } });\n}\nreturn results;"
+      },
+      "id": "29490592-8478-4c68-b139-b3d6bfacba5c",
+      "name": "Malware & Hash Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        430
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "be9f1b72-4ada-442b-8e3d-bed0707601de",
+      "name": "Merge Hash Enrichment",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        3080,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f17666d9-aae5-4033-b0f3-a80d1a2bebb8",
+              "leftValue": "={{$json.raw?.data?.vulnerability?.cve || \"\"}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "12f8c396-cf8e-412b-856a-55e091fb0f24",
+      "name": "Has Vulnerability Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== VULNERABILITY / CVSS ENRICHMENT =====\n// Wazuh's vulnerability-detector module already computes most of this; we\n// read it straight off the raw alert and optionally enrich with NVD for a\n// public reference link. \"Fix version\" comes from Wazuh's own \"condition\"\n// field, which states the version threshold that resolves the finding.\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const a = item.json;\n  const v = a.raw?.data?.vulnerability || {};\n  let nvdRef = null;\n\n  if (v.cve) {\n    try {\n      const resp = await this.helpers.httpRequest({\n        method: \"GET\",\n        url: \"https://services.nvd.nist.gov/rest/json/cves/2.0\",\n        qs: { cveId: v.cve },\n        json: true,\n        timeout: 8000,\n      });\n      const cveItem = resp.vulnerabilities?.[0]?.cve;\n      if (cveItem) {\n        nvdRef = {\n          description: cveItem.descriptions?.find(d => d.lang === \"en\")?.value || null,\n          references: (cveItem.references || []).slice(0, 3).map(r => r.url),\n        };\n      }\n    } catch (e) { /* best effort only */ }\n  }\n\n  const cvss = v.cvss?.cvss3?.base_score ?? v.cvss?.cvss2?.base_score ?? null;\n  const band = cvss === null ? \"unknown\" : cvss >= 9 ? \"Critical\" : cvss >= 7 ? \"High\" : cvss >= 4 ? \"Medium\" : \"Low\";\n\n  const vulnerability = {\n    present: true,\n    cve: v.cve || null,\n    title: v.title || null,\n    severity: v.severity || band,\n    cvssScore: cvss,\n    cvssBand: band,\n    cvssVector: v.cvss?.cvss3?.vector || null,\n    package: v.package?.name || null,\n    installedVersion: v.package?.version || null,\n    fixCondition: v.condition || \"Not specified by Wazuh - check vendor advisory\",\n    status: v.status || null,\n    published: v.published || null,\n    nvdDescription: nvdRef?.description || null,\n    references: nvdRef?.references || (v.reference ? [v.reference] : []),\n  };\n\n  results.push({ json: { ...a, _vulnerability: vulnerability } });\n}\nreturn results;"
+      },
+      "id": "0ae3e1a9-7610-4143-9af6-69468b46a5ed",
+      "name": "Vulnerability Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3420,
+        430
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "808ac847-5122-43fd-b195-c65c2bf32c35",
+      "name": "Merge Vulnerability Enrichment",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        3640,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== CONSOLIDATE ENRICHMENT =====\n// The IP/Geo, Malware and Vulnerability nodes already attach clean sub-objects\n// (_ipReputation, _geoFootprint, _malwareAnalysis, _vulnerability). This just\n// guarantees every alert has all four keys present (as \"not checked\") even\n// when a branch was skipped, so the report generator never has to null-check.\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const threatIntel = {\n    ipReputation: a._ipReputation || { checked: false },\n    geoFootprint: a._geoFootprint || { checked: false },\n    malwareAnalysis: a._malwareAnalysis || { checked: false },\n    vulnerability: a._vulnerability || { present: false },\n  };\n  return { json: { ...a, _threatIntel: threatIntel } };\n});"
+      },
+      "id": "f33c70c6-f3c0-4766-b731-086257b7f0f3",
+      "name": "Consolidate Enrichment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3860,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== BUILD AI PROMPT =====\n// Frames the AI as a SOC L1/L2 analyst and forces strict JSON output so the\n// next node can parse it reliably.\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const ti = a._threatIntel || {};\n\n  const systemPrompt = `You are a senior SOC (Security Operations Center) analyst performing L1 triage and L2 deep-dive analysis on a Wazuh SIEM alert.\nThink like an analyst who has to defend this call in a post-incident review: be specific, cite the actual data given (IPs, counts, reputation scores), and never invent facts not present in the alert or threat intel provided.\nRespond with STRICT, VALID JSON ONLY (no markdown fences, no prose outside the JSON) matching exactly this schema:\n{\n  \"verdict\": \"malicious\" | \"suspicious\" | \"benign\",\n  \"confidence\": 0-100,\n  \"severity_assessment\": \"string, 1-2 sentences on how serious this is and why\",\n  \"kill_chain_stage\": \"e.g. Reconnaissance | Initial Access | Execution | Persistence | Privilege Escalation | Defense Evasion | Credential Access | Discovery | Lateral Movement | Collection | Exfiltration | Impact | n/a\",\n  \"mitre_attack\": {\"tactic\": \"string\", \"technique\": \"string\", \"technique_id\": \"string\"},\n  \"business_impact\": \"1 sentence: what's actually at risk if this is real (data, uptime, credentials, lateral movement path)\",\n  \"false_positive_likelihood\": \"low\" | \"medium\" | \"high\",\n  \"false_positive_reasoning\": \"1 sentence: the specific evidence that raises or lowers FP likelihood\",\n  \"l1_triage_summary\": \"2-3 sentence plain-English summary for a first responder, written for someone triaging 50 alerts this hour\",\n  \"l2_analysis\": \"deeper technical analysis: attack chain reasoning, why the IOCs/context support the verdict, what corroborating evidence would strengthen or weaken it\",\n  \"recommended_actions\": [\"array\", \"of\", \"concrete\", \"prioritized\", \"next steps\"],\n  \"analyst_notes\": \"1 sentence: anything an analyst should double check that the automated pipeline could not verify (e.g. 'confirm this user's normal working hours')\",\n  \"auto_block_recommended\": true | false\n}`;\n\n  const userPrompt = `ALERT DATA\nRule: [${a.ruleId}] Level ${a.ruleLevel} - ${a.ruleDescription}\nRule groups: ${(a.ruleGroups||[]).join(\", \")}\nMITRE (from Wazuh, if present): ${(a.mitreId||[]).join(\",\")} / ${(a.mitreTactic||[]).join(\",\")}\nAgent (target/impacted system): ${a.agentName} (${a.agentId}) IP ${a.agentIp}\nSource IP: ${a.srcIp || \"n/a\"}\nDestination IP: ${a.dstIp || \"n/a\"}\nUser: ${a.srcUser || \"n/a\"}\nFile path: ${a.filePath || \"n/a\"}\nFile hash (sha256): ${a.fileHashSha256 || \"n/a\"}\nFull log line: ${a.fullLog || \"n/a\"}\n\nIP REPUTATION & GEO FOOTPRINT\nAbuseIPDB: ${ti.ipReputation?.checked ? `confidence score ${ti.ipReputation.confidenceScore}/100, ${ti.ipReputation.totalReports} reports, Tor exit node: ${ti.ipReputation.isTor}, usage type: ${ti.ipReputation.usageType}` : \"not checked / no source IP\"}\nGeolocation: ${ti.geoFootprint?.checked ? `${ti.geoFootprint.city || \"\"}, ${ti.geoFootprint.region || \"\"}, ${ti.geoFootprint.country} \u2014 ASN/ISP: ${ti.geoFootprint.isp || ti.geoFootprint.org || \"n/a\"} \u2014 proxy/VPN: ${ti.geoFootprint.isProxyOrVpn}, hosting/datacenter: ${ti.geoFootprint.isHosting}` : \"not checked\"}\n\nMALWARE ANALYSIS\nVirusTotal: ${ti.malwareAnalysis?.checked ? `${ti.malwareAnalysis.detectionRatio} vendors flag this file malicious/suspicious, type: ${ti.malwareAnalysis.fileType}, classification: ${ti.malwareAnalysis.popularThreatClassification || \"n/a\"}, known names: ${(ti.malwareAnalysis.knownNames||[]).join(\", \")}` : \"not checked / no file hash\"}\n\nVULNERABILITY DATA\n${ti.vulnerability?.present ? `CVE ${ti.vulnerability.cve} \u2014 CVSS ${ti.vulnerability.cvssScore ?? \"n/a\"} (${ti.vulnerability.cvssBand}) \u2014 affected package ${ti.vulnerability.package} v${ti.vulnerability.installedVersion} \u2014 fix: ${ti.vulnerability.fixCondition}` : \"no vulnerability data on this alert\"}\n\nAnalyze this alert as a SOC analyst would and return the JSON described in the system prompt. Factor the target system's role and the geo/reputation/vulnerability context above into severity_assessment and business_impact.`;\n\n  return { json: { ...a, _aiSystemPrompt: systemPrompt, _aiUserPrompt: userPrompt } };\n});"
+      },
+      "id": "28ba2b9a-69d4-4f82-b21c-2908c1988da4",
+      "name": "Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4080,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$json._config.ollamaUrl}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json._config.ollamaModel, system: $json._aiSystemPrompt, prompt: $json._aiUserPrompt, format: \"json\", stream: false, options: { temperature: 0.1 } }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "f881d146-50ad-4e27-9ad1-2b55395bd91b",
+      "name": "Ollama AI Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4300,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== PARSE AI RESPONSE =====\nconst items = $input.all();\nreturn items.map(item => {\n  const j = item.json;\n  let parsed;\n  try {\n    // Ollama /api/generate returns { response: \"<json string>\" }\n    parsed = JSON.parse(j.response);\n  } catch (e) {\n    parsed = {\n      verdict: \"suspicious\",\n      confidence: 0,\n      severity_assessment: \"AI analysis failed to parse - defaulting to suspicious for human review.\",\n      kill_chain_stage: \"n/a\",\n      mitre_attack: {tactic: \"unknown\", technique: \"unknown\", technique_id: \"unknown\"},\n      business_impact: \"Unknown - automated analysis unavailable for this alert.\",\n      false_positive_likelihood: \"medium\",\n      false_positive_reasoning: \"Not assessed - AI output failed to parse.\",\n      l1_triage_summary: \"Automated AI triage failed (parse error). Manual L1 review required.\",\n      l2_analysis: `Raw model output: ${String(j.response).slice(0, 500)}`,\n      recommended_actions: [\"Manual analyst review required - AI parsing failed\"],\n      analyst_notes: \"Verify the Ollama model is returning valid JSON (format:\\\"json\\\" should enforce this).\",\n      auto_block_recommended: false,\n      _parseError: true\n    };\n  }\n  return { json: { ...j, response: undefined, _ai: parsed } };\n});"
+      },
+      "id": "e60ecc40-29c9-4f4f-bd65-3d96768600ac",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4520,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== GENERATE IR REPORT =====\n// Standard SOC/CERT-style incident report: white body, navy-blue structure,\n// red reserved strictly for severity/risk signals (verdict, high CVSS,\n// malicious detections) so red always means \"pay attention here\".\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const ai = a._ai || {};\n  const ti = a._threatIntel || {};\n  const now = new Date().toISOString();\n\n  const NAVY = \"#0B2545\";\n  const BLUE = \"#1E5AA8\";\n  const BLUE_SOFT = \"#EAF1FB\";\n  const RED = \"#B91C1C\";\n  const RED_SOFT = \"#FDECEC\";\n  const WHITE = \"#FFFFFF\";\n  const GREY = \"#5B6472\";\n\n  const verdict = (ai.verdict || \"unknown\").toLowerCase();\n  const verdictColor = verdict === \"malicious\" ? RED : verdict === \"suspicious\" ? \"#B45309\" : BLUE;\n  const verdictSoft  = verdict === \"malicious\" ? RED_SOFT : verdict === \"suspicious\" ? \"#FEF3E2\" : BLUE_SOFT;\n\n  const conf = Number(ai.confidence ?? 0);\n  const confColor = conf >= 80 ? (verdict === \"malicious\" ? RED : BLUE) : conf >= 50 ? \"#B45309\" : GREY;\n\n  const cvss = ti.vulnerability?.cvssScore;\n  const cvssColor = cvss === undefined || cvss === null ? GREY : cvss >= 7 ? RED : cvss >= 4 ? \"#B45309\" : BLUE;\n\n  // ---- SEVERITY SCORE (standalone composite, 0-100) ----\n  // Standard SOC weighting: rule severity (Wazuh) + CVSS (if a vuln is involved)\n  // + AI confidence in a malicious/suspicious call. This is distinct from AI\n  // confidence and from CVSS - it's the single number a manager glances at.\n  const ruleNorm = Math.min(Number(a.ruleLevel || 0), 15) / 15;           // Wazuh levels run 0-15\n  const cvssNorm = cvss !== undefined && cvss !== null ? cvss / 10 : ruleNorm; // fall back to rule if no CVE\n  const verdictWeight = verdict === \"malicious\" ? 1 : verdict === \"suspicious\" ? 0.55 : 0.15;\n  const confNorm = (conf / 100) * verdictWeight;\n  const severityScore = Math.round((ruleNorm * 0.35 + cvssNorm * 0.30 + confNorm * 0.35) * 100);\n  const sevBand = severityScore >= 80 ? \"Critical\" : severityScore >= 60 ? \"High\" : severityScore >= 35 ? \"Medium\" : \"Low\";\n  const sevColor = sevBand === \"Critical\" || sevBand === \"High\" ? RED : sevBand === \"Medium\" ? \"#B45309\" : BLUE;\n\n  const badge = (label, value, bg, fg) =>\n    `<span style=\"display:inline-block;background:${bg};color:${fg};padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;\">${label}: ${value}</span>`;\n\n  const row = (label, value, valueColor) => value ? `<tr><td style=\"padding:6px 14px 6px 0;color:${GREY};font-size:12px;white-space:nowrap;vertical-align:top;width:170px;\"><b>${label}</b></td><td style=\"padding:6px 0;font-size:13px;color:${valueColor || '#111827'};\">${value}</td></tr>` : \"\";\n\n  const section = (title, bodyHtml, accent) => `\n    <tr><td style=\"padding:22px 26px 6px;\">\n      <div style=\"display:flex;align-items:center;margin-bottom:12px;\">\n        <div style=\"width:4px;height:16px;background:${accent||NAVY};margin-right:8px;\"></div>\n        <h3 style=\"margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:${NAVY};\">${title}</h3>\n      </div>\n      ${bodyHtml}\n    </td></tr>`;\n\n  const mono = (v) => v ? `<code style=\"background:${BLUE_SOFT};color:${NAVY};padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;\">${v}</code>` : \"<span style='color:#9ca3af'>n/a</span>\";\n\n  // ---- IP reputation & geo footprint (always rendered if we have a src IP) ----\n  const geo = ti.geoFootprint || {};\n  const rep = ti.ipReputation || {};\n  const geoBlock = a.srcIp ? `\n    <table width=\"100%\" style=\"border-collapse:collapse;\">\n      ${row(\"IP Address\", mono(a.srcIp))}\n      ${row(\"Location\", geo.checked ? `${geo.city || \"Unknown city\"}, ${geo.region || \"\"} ${geo.country || \"\"}`.trim() : \"not resolved\")}\n      ${row(\"ASN / ISP\", geo.checked ? (geo.isp || geo.org || \"n/a\") : \"n/a\")}\n      ${row(\"Proxy / VPN / Hosting\", geo.checked ? `${geo.isProxyOrVpn ? \"Proxy/VPN detected\" : \"No proxy/VPN\"}${geo.isHosting ? \" \u00b7 Datacenter/hosting IP\" : \"\"}` : \"n/a\", geo.isProxyOrVpn || geo.isHosting ? RED : undefined)}\n      ${row(\"AbuseIPDB Score\", rep.checked ? `${rep.confidenceScore}/100 (${rep.totalReports} reports)` : \"not checked\", rep.checked && rep.confidenceScore >= 50 ? RED : undefined)}\n      ${row(\"Tor Exit Node\", rep.checked ? (rep.isTor ? \"YES\" : \"No\") : \"n/a\", rep.checked && rep.isTor ? RED : undefined)}\n      ${row(\"Usage Type\", rep.checked ? (rep.usageType || \"n/a\") : \"n/a\")}\n    </table>` : `<p style=\"margin:0;color:${GREY};font-size:13px;\">No source IP present on this alert.</p>`;\n\n  // ---- Target / impacted system ----\n  const targetBlock = `\n    <table width=\"100%\" style=\"border-collapse:collapse;\">\n      ${row(\"Hostname / Agent\", `${a.agentName} (${a.agentId})`)}\n      ${row(\"Agent IP\", mono(a.agentIp))}\n      ${row(\"Asset Criticality\", (a._config?.criticalAssets||[]).includes(a.agentName) || (a._config?.criticalAssets||[]).includes(a.agentId) ? \"CRITICAL ASSET\" : \"Standard\", (a._config?.criticalAssets||[]).includes(a.agentName) ? RED : undefined)}\n      ${row(\"Affected User\", mono(a.srcUser))}\n    </table>`;\n\n  // ---- Vulnerability / CVSS (only if present) ----\n  const vulnBlock = ti.vulnerability?.present ? `\n    <table width=\"100%\" style=\"border-collapse:collapse;\">\n      ${row(\"CVE ID\", mono(ti.vulnerability.cve))}\n      ${row(\"CVSS Score\", ti.vulnerability.cvssScore !== null ? `${ti.vulnerability.cvssScore} (${ti.vulnerability.cvssBand})` : \"n/a\", cvssColor)}\n      ${row(\"CVSS Vector\", ti.vulnerability.cvssVector ? mono(ti.vulnerability.cvssVector) : \"n/a\")}\n      ${row(\"Affected Package\", `${ti.vulnerability.package || \"n/a\"} \u2014 installed v${ti.vulnerability.installedVersion || \"n/a\"}`)}\n      ${row(\"Fix / Remediation\", ti.vulnerability.fixCondition, BLUE)}\n      ${row(\"Status\", ti.vulnerability.status || \"n/a\")}\n      ${ti.vulnerability.references?.length ? row(\"References\", ti.vulnerability.references.map(r=>`<a href=\"${r}\" style=\"color:${BLUE};\">${r}</a>`).join(\"<br/>\")) : \"\"}\n    </table>` : null;\n\n  // ---- Malware analysis (only if a file hash was present) ----\n  const malwareBlock = ti.malwareAnalysis?.checked ? `\n    <table width=\"100%\" style=\"border-collapse:collapse;\">\n      ${row(\"SHA256\", mono(a.fileHashSha256))}\n      ${row(\"File Path\", mono(a.filePath))}\n      ${row(\"Detection Ratio\", ti.malwareAnalysis.detectionRatio, ti.malwareAnalysis.maliciousVendors > 0 ? RED : BLUE)}\n      ${row(\"File Type\", ti.malwareAnalysis.fileType)}\n      ${row(\"Threat Classification\", ti.malwareAnalysis.popularThreatClassification || \"n/a\", ti.malwareAnalysis.popularThreatClassification ? RED : undefined)}\n      ${row(\"Known Names\", (ti.malwareAnalysis.knownNames||[]).join(\", \") || \"n/a\")}\n      ${row(\"Signature\", ti.malwareAnalysis.signatureVerified)}\n    </table>` : (a.fileHashSha256 ? `<p style=\"margin:0;color:${GREY};font-size:13px;\">File hash present but VirusTotal lookup unavailable.</p>` : null);\n\n  // running section counter so numbering stays correct whether or not the\n  // optional Vulnerability/Malware sections are present\n  let _secN = 2;\n  const sectionNum = () => { _secN += 1; return _secN; };\n\n  const html = `\n  <div style=\"font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;background:${WHITE};border:1px solid #D8DEE9;\">\n\n    <div style=\"background:${NAVY};color:${WHITE};padding:20px 26px;border-top:6px solid ${sevColor};\">\n      <div style=\"font-size:11px;opacity:.75;letter-spacing:.08em;text-transform:uppercase;\">${a._config?.orgName || \"SOC\"} &middot; Incident Response Report &middot; TLP:AMBER</div>\n      <div style=\"font-size:21px;font-weight:700;margin-top:6px;\">${a.ruleDescription}</div>\n      <div style=\"font-size:12px;opacity:.85;margin-top:6px;\">Alert ${a.alertId} &middot; Rule ${a.ruleId} (Level ${a.ruleLevel}) &middot; ${now}</div>\n    </div>\n\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n\n      <tr><td style=\"padding:20px 26px;background:${sevColor};color:${WHITE};\">\n        <table width=\"100%\" style=\"border-collapse:collapse;\"><tr>\n          <td style=\"font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;\">Overall Severity Score</td>\n        </tr><tr>\n          <td style=\"font-size:34px;font-weight:800;line-height:1.1;\">${severityScore}<span style=\"font-size:16px;font-weight:600;opacity:.85;\">/100 &mdash; ${sevBand}</span></td>\n        </tr></table>\n      </td></tr>\n\n      <tr><td style=\"padding:18px 26px 0;background:${verdictSoft};border-bottom:1px solid #D8DEE9;\">\n        <div style=\"padding-bottom:14px;\">\n          ${badge(\"Verdict\", verdict.toUpperCase(), verdictColor, WHITE)}\n          ${badge(\"AI Confidence\", conf + \"%\", confColor, WHITE)}\n          ${badge(\"False Positive\", (ai.false_positive_likelihood||\"n/a\").toUpperCase(), (ai.false_positive_likelihood===\"high\"?RED:ai.false_positive_likelihood===\"medium\"?\"#B45309\":BLUE), WHITE)}\n          ${cvss !== undefined && cvss !== null ? badge(\"CVSS\", cvss, cvssColor, WHITE) : \"\"}\n          ${badge(\"Kill Chain\", ai.kill_chain_stage || \"n/a\", NAVY, WHITE)}\n        </div>\n      </td></tr>\n\n      ${section(\"0. Executive Summary\", `\n        <p style=\"margin:0;font-size:13px;line-height:1.6;color:#111827;\">${ai.l1_triage_summary || \"n/a\"}</p>`, sevColor)}\n\n      ${section(\"1. Target / Impacted System\", targetBlock, NAVY)}\n      ${section(\"2. IP Reputation &amp; Geo Footprint\", geoBlock, BLUE)}\n      ${vulnBlock ? section(sectionNum() + \". Vulnerability Details\", vulnBlock, RED) : \"\"}\n      ${malwareBlock ? section(sectionNum() + \". Malware Analysis\", malwareBlock, RED) : \"\"}\n\n      ${section(sectionNum() + \". L1 Triage Analysis\", `\n        <p style=\"margin:0 0 8px;font-size:13px;line-height:1.6;color:#111827;\">${ai.l1_triage_summary || \"n/a\"}</p>\n        <p style=\"margin:0;font-size:12px;color:${GREY};\"><b>FP reasoning:</b> ${ai.false_positive_reasoning || \"n/a\"}</p>`, BLUE)}\n\n      ${section(sectionNum() + \". L2 Deep-Dive Analysis\", `\n        <p style=\"margin:0;font-size:13px;line-height:1.65;color:#111827;\">${ai.l2_analysis || \"n/a\"}</p>`, BLUE)}\n\n      ${section(sectionNum() + \". MITRE ATT&amp;CK Mapping\", `\n        <table width=\"100%\" style=\"border-collapse:collapse;\">\n          ${row(\"Tactic\", ai.mitre_attack?.tactic || \"n/a\")}\n          ${row(\"Technique\", `${ai.mitre_attack?.technique || \"n/a\"} (${ai.mitre_attack?.technique_id || \"n/a\"})`)}\n          ${row(\"Business Impact\", ai.business_impact || \"n/a\", RED)}\n        </table>`, NAVY)}\n\n      ${section(sectionNum() + \". Recommendation &amp; Action Required\", `\n        <ol style=\"margin:0;padding-left:18px;font-size:13px;line-height:1.8;color:#111827;\">\n          ${(ai.recommended_actions||[]).map(x => `<li>${x}</li>`).join(\"\") || \"<li>n/a</li>\"}\n        </ol>`, RED)}\n\n      ${section(sectionNum() + \". Response Taken\", `\n        <p style=\"margin:0;font-size:13px;color:${NAVY};background:${BLUE_SOFT};border-left:3px solid ${BLUE};padding:10px 12px;\">{{RESPONSE_TAKEN}}</p>`, BLUE)}\n\n      ${ai.analyst_notes ? section(sectionNum() + \". Analyst Notes\", `<p style=\"margin:0;font-size:12px;color:${GREY};font-style:italic;\">${ai.analyst_notes}</p>`, NAVY) : \"\"}\n\n      <tr><td style=\"padding:16px 26px;background:${NAVY};\">\n        <p style=\"margin:0;color:#AEB9CC;font-size:11px;\">Auto-generated by AI SOC Agent &middot; ${a._config?.orgName || \"\"} &middot; Classify per your data handling policy before external distribution.</p>\n      </td></tr>\n    </table>\n  </div>`;\n\n  // ---- Slack: minimal, one line, detail lives in the email ----\n  const slackEmoji = verdict === \"malicious\" ? \"\ud83d\udd34\" : verdict === \"suspicious\" ? \"\ud83d\udfe0\" : \"\ud83d\udd35\";\n  const slackSummary = `${slackEmoji} *${verdict.toUpperCase()}* (${conf}%) \u2014 Rule ${a.ruleId} L${a.ruleLevel}: ${a.ruleDescription} \u2014 ${a.agentName}${a.srcIp ? \" \u2014 \" + a.srcIp : \"\"}${cvss ? ` \u2014 CVSS ${cvss}` : \"\"} \u00b7 full report sent by email`;\n\n  return { json: { ...a, _reportHtml: html, _slackSummary: slackSummary } };\n});"
+      },
+      "id": "88c22a3f-34bb-4f85-9479-b0652e8a6bed",
+      "name": "Generate IR Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4740,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "output": "={{ $json._ai.verdict === \"malicious\" ? 0 : $json._ai.verdict === \"suspicious\" ? 1 : 2 }}",
+        "options": {
+          "fallbackOutput": 2
+        }
+      },
+      "id": "cfac325c-3cc9-4e7a-8f37-14bb928d4355",
+      "name": "Route by Verdict",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        4960,
+        550
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== AUTO-BLOCK SAFEGUARD CHECK =====\n// Never auto-block: internal/private IPs, explicitly allowlisted IPs,\n// critical assets, or when auto-block is globally disabled.\nfunction ipInCidr(ip, cidr) {\n  try {\n    const [range, bits] = cidr.split(\"/\");\n    const mask = ~(2 ** (32 - Number(bits)) - 1);\n    const ipToInt = s => s.split(\".\").reduce((acc, o) => (acc << 8) + Number(o), 0) >>> 0;\n    return (ipToInt(ip) & mask) === (ipToInt(range) & mask);\n  } catch (e) { return false; }\n}\n\nconst items = $input.all();\nreturn items.map(item => {\n  const a = item.json;\n  const cfg = a._config || {};\n  const ip = a.srcIp;\n  const reasons = [];\n\n  if (!cfg.autoBlockEnabled) reasons.push(\"Auto-block disabled globally in Configuration Center\");\n  if (!ip) reasons.push(\"No source IP present to block\");\n  if (ip && (cfg.internalCidrs || []).some(c => c && ipInCidr(ip, c))) reasons.push(\"IP is internal/private - never auto-block\");\n  if (ip && (cfg.allowlistIps || []).includes(ip)) reasons.push(\"IP is explicitly allowlisted\");\n  if ((cfg.criticalAssets || []).includes(a.agentName) || (cfg.criticalAssets || []).includes(a.agentId)) reasons.push(\"Agent is a critical asset - block requires human approval\");\n  if (a._ai?.confidence !== undefined && a._ai.confidence < 70) reasons.push(\"AI confidence below 70% - too low to auto-block\");\n  if (a.ruleLevel < (cfg.criticalThreshold || 12)) reasons.push(\"Rule level below critical auto-block threshold\");\n\n  const safeToBlock = reasons.length === 0 && a._ai?.auto_block_recommended === true;\n  return { json: { ...a, _blockSafe: safeToBlock, _blockBlockedReasons: reasons } };\n});"
+      },
+      "id": "2af5a1c4-9726-4fb3-82ee-7a251f51530f",
+      "name": "Auto-Block Safeguard Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5180,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "224827ec-5ea8-430d-9545-3a1c9d26d5d1",
+              "leftValue": "={{$json._blockSafe}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "f5bf21aa-159d-49d0-9bee-425a2c463989",
+      "name": "Safe to Auto-Block?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        5400,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{$json._config.wazuhApiUrl}}/active-response",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: \"firewall-drop0\", custom: true, alert: { data: { srcip: $json.srcIp } }, arguments: [$json.srcIp] }) }}",
+        "options": {
+          "timeout": 10000
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "d7d341fc-751c-47ed-9192-9b856a9da20a",
+      "name": "Wazuh Active Response - Block IP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5620,
+        210
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { ...i.json, _responseTaken: `Source IP ${i.json.srcIp} auto-blocked via Wazuh Active Response.` } }));"
+      },
+      "id": "8734306c-55a6-4c62-b471-a60223a687d7",
+      "name": "Log Block Executed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5840,
+        210
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { ...i.json, _responseTaken: `Auto-block NOT executed. Reasons: ${(i.json._blockBlockedReasons||[]).join(\"; \") || \"n/a\"}. Escalated for manual analyst decision.` } }));"
+      },
+      "id": "8c0167b5-03d5-47f8-916e-7b6f4c8bef3a",
+      "name": "Log Block Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5620,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "id": "415add71-f9f9-4813-be6e-3fe62f7a128c",
+      "name": "Merge Block Outcome",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        6060,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { ...i.json, _reportHtml: (i.json._reportHtml||\"\").replace(\"{{RESPONSE_TAKEN}}\", i.json._responseTaken || \"No automated response taken.\") } }));"
+      },
+      "id": "2fbea350-8af9-48cc-8c80-e306ea85ed2e",
+      "name": "Finalize Report (Critical)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6280,
+        330
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "soc-critical-alerts",
+          "mode": "name"
+        },
+        "text": "={{$json._slackSummary}}",
+        "otherOptions": {}
+      },
+      "id": "2ea3d8f9-62ca-4310-bfeb-e14cbdfb34df",
+      "name": "Slack: Critical Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        6500,
+        210
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{$env.SOC_L2_ESCALATION_EMAIL}}",
+        "subject": "=[CRITICAL] SOC Incident Report - {{$json.ruleDescription}} ({{$json.agentName}})",
+        "emailType": "html",
+        "message": "={{$json._reportHtml}}",
+        "options": {}
+      },
+      "id": "2918b887-228e-4119-b3f0-5ee8b5388f70",
+      "name": "Email: Critical IR Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        6500,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { ...i.json, _responseTaken: \"No auto-block (verdict: suspicious). Escalated to L2 analyst for manual investigation.\" } }));"
+      },
+      "id": "053c2051-c683-4bc2-8c32-76b7edb197ef",
+      "name": "Prepare L2 Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5180,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { ...i.json, _reportHtml: (i.json._reportHtml||\"\").replace(\"{{RESPONSE_TAKEN}}\", i.json._responseTaken || \"No automated response taken.\") } }));"
+      },
+      "id": "e5b6036f-1327-44c2-8fb7-5642ba33d2dd",
+      "name": "Finalize Report (Suspicious)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5400,
+        850
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "soc-l2-review",
+          "mode": "name"
+        },
+        "text": "={{$json._slackSummary}}",
+        "otherOptions": {}
+      },
+      "id": "a2ca11b6-b847-4530-b5a1-a71c136fc0b4",
+      "name": "Slack: Escalate to L2",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        5620,
+        790
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{$env.SOC_L2_REVIEW_EMAIL}}",
+        "subject": "=[Review] SOC Alert - {{$json.ruleDescription}} ({{$json.agentName}})",
+        "emailType": "html",
+        "message": "={{$json._reportHtml}}",
+        "options": {}
+      },
+      "id": "dfbf4f99-547e-4e6d-84aa-91f7b90867d2",
+      "name": "Email: L2 Review Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5620,
+        910
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ===== AUTO-CLOSE BENIGN ALERT =====\n// Mirrors what an L1 analyst does with low-risk/known-noise alerts all day:\n// log it, close it, no human paged. Kept queryable for weekly QA sampling.\nconst items = $input.all();\nreturn items.map(i => ({\n  json: {\n    alertId: i.json.alertId,\n    ruleId: i.json.ruleId,\n    verdict: \"benign\",\n    confidence: i.json._ai?.confidence,\n    closedAt: new Date().toISOString(),\n    summary: i.json._ai?.l1_triage_summary\n  }\n}));"
+      },
+      "id": "8af148ce-4785-4873-886a-50980199ae2c",
+      "name": "Auto-Close Benign Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5180,
+        1090
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "276dd760-85fa-4bb7-b6e4-e0fee6b45897",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        220,
+        1150
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const err = $input.first().json;\nreturn [{\n  json: {\n    workflow: err.workflow?.name || \"AI SOC Agent\",\n    failedNode: err.execution?.lastNodeExecuted || \"unknown\",\n    errorMessage: err.execution?.error?.message || JSON.stringify(err).slice(0,500),\n    timestamp: new Date().toISOString(),\n  }\n}];"
+      },
+      "id": "13acb82e-52e8-4a7b-bf6f-0c21776d2db5",
+      "name": "Format Error Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        1150
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "soc-automation-errors",
+          "mode": "name"
+        },
+        "text": "=\ud83d\udd34 SOC workflow error in *{{$json.failedNode}}*\n{{$json.errorMessage}}\n{{$json.timestamp}}",
+        "otherOptions": {}
+      },
+      "id": "171b04a3-6956-4213-a072-c66132633d91",
+      "name": "Slack: Workflow Error",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        1150
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { note: \"Alert dropped: failed input validation\", errors: i.json._validationErrors, receivedAt: new Date().toISOString(), raw: i.json } }));"
+      },
+      "id": "22a02b47-aade-4544-9651-c593b8bfb2d9",
+      "name": "Log Invalid Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        830
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { note: \"Alert dropped: duplicate within dedupe window\", dedupeKey: i.json._dedupeKey, receivedAt: new Date().toISOString() } }));"
+      },
+      "id": "d2b3f21d-be0f-4bba-af51-c6ebf7dd2965",
+      "name": "Log Duplicate Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        830
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nreturn items.map(i => ({ json: { note: \"Alert dropped: below severity threshold\", ruleLevel: i.json.ruleLevel, threshold: i.json._config?.severityThreshold } }));"
+      },
+      "id": "7e897c5e-bdd5-4a44-8451-206f956b0f7d",
+      "name": "Log Below-Threshold Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        830
+      ]
+    },
+    {
+      "parameters": {
+        "content": "# \ud83d\udee1\ufe0f AI SOC AGENT\n## Automated Wazuh Alert Triage &amp; Incident Response\n\n**Flow:** Webhook \u2192 Validate \u2192 Dedupe \u2192 Severity Gate \u2192 IOC Extraction \u2192 Threat Intel \u2192 AI Analysis (Ollama) \u2192 Verdict Routing \u2192 Safeguarded Auto-Block \u2192 IR Report \u2192 Slack + Email\n\n**Stack:** n8n \u00b7 Wazuh \u00b7 Ollama \u00b7 AbuseIPDB \u00b7 VirusTotal \u00b7 ip-api.com \u00b7 NVD\n\n---\n\ud83d\udc64 Built by **@dipnarayannandi**",
+        "height": 560,
+        "width": 1180,
+        "color": 5
+      },
+      "id": "c2ae8f6e-c6a8-4b36-8a83-81fb5b5f5ba4",
+      "name": "Note: # \ud83d\udee1\ufe0f AI SOC AGENT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -60,
+        -760
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \u2699\ufe0f Configuration Center\nSingle source of truth for every tunable \u2014 thresholds, allowlists, API endpoints, model name.",
+        "height": 270,
+        "width": 270,
+        "color": 6
+      },
+      "id": "681b42be-8c06-44a9-99e2-5ecddb882d14",
+      "name": "Note: ## \u2699\ufe0f Configuration Center",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        170,
+        490
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \u2705 Input Validation, Dedup &amp; Severity Gate\nRejects malformed alerts, drops duplicates within a rolling window, and filters by severity before anything expensive runs.",
+        "height": 370,
+        "width": 1590,
+        "color": 6
+      },
+      "id": "eaa463dc-d5dc-43df-851a-b9efe0b3ce22",
+      "name": "Note: ## \u2705 Input Validation, Dedup &amp; Sever",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        390,
+        390
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83c\udf10 Multi-Source Threat Intelligence\nIP reputation + geo footprint, malware/hash analysis, and vulnerability/CVSS lookup \u2014 each skipped gracefully when the IOC isn't present on the alert.",
+        "height": 390,
+        "width": 2150,
+        "color": 7
+      },
+      "id": "acfe47e6-243c-4296-b0ba-61fbcd02c4d0",
+      "name": "Note: ## \ud83c\udf10 Multi-Source Threat Intelligence",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1930,
+        270
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83e\udd16 AI Analysis Pipeline\nLocal Ollama model performs L1 triage + L2 deep-dive: verdict, confidence, MITRE mapping, kill-chain stage, business impact, recommended actions \u2014 as strict JSON.",
+        "height": 270,
+        "width": 930,
+        "color": 5
+      },
+      "id": "bf91b6a7-44a7-450b-a21d-2d838ebb428c",
+      "name": "Note: ## \ud83e\udd16 AI Analysis Pipeline",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4030,
+        390
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udeab Auto-Block With Safeguards\nNever blocks internal IPs, allowlisted IPs, critical assets, or low-confidence calls. Global kill switch. Every decision is logged with its reason.",
+        "height": 560,
+        "width": 1340,
+        "color": 7
+      },
+      "id": "af2d6944-5084-4127-ab06-b2357337e5a5",
+      "name": "Note: ## \ud83d\udeab Auto-Block With Safeguards",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        4925,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udce3 Critical Response\nVerdict = malicious, safeguards passed: full color-coded report by email, one-line alert to Slack.",
+        "height": 460,
+        "width": 460,
+        "color": 6
+      },
+      "id": "dea573a1-7206-42c9-bc09-688b9b45d962",
+      "name": "Note: ## \ud83d\udce3 Critical Response",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        6245,
+        85
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \ud83d\udce3 L2 Review &amp; Auto-Close\nSuspicious \u2192 escalated to L2 (Slack + email). Benign \u2192 logged and closed automatically, no page sent.",
+        "height": 520,
+        "width": 680,
+        "color": 6
+      },
+      "id": "a98ad72e-d5db-4143-93c8-82c2a710c690",
+      "name": "Note: ## \ud83d\udce3 L2 Review &amp; Auto-Close",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        5145,
+        665
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## \u26a0\ufe0f Error Handling\nA dedicated Error Trigger catches any node failure workflow-wide and pages a Slack channel with the failing node + message.",
+        "height": 270,
+        "width": 710,
+        "color": 7
+      },
+      "id": "cf4edc2e-40e9-49c9-b34c-7af45d5c5d77",
+      "name": "Note: ## \u26a0\ufe0f Error Handling",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        170,
+        990
+      ]
+    }
+  ],
+  "connections": {
+    "Wazuh Alert Webhook": {
+      "main": [
+        [
+          {
+            "node": "Configuration Center",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration Center": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Normalize Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Invalid Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Alert": {
+      "main": [
+        [
+          {
+            "node": "Deduplication Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplication Check": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Log Duplicate Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Severity Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Severity Gate": {
+      "main": [
+        [
+          {
+            "node": "Extract IOCs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Below-Threshold Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract IOCs": {
+      "main": [
+        [
+          {
+            "node": "Has Source IP?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Source IP?": {
+      "main": [
+        [
+          {
+            "node": "IP & Geo Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge IP Enrichment",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "IP & Geo Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Merge IP Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge IP Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Has File Hash?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has File Hash?": {
+      "main": [
+        [
+          {
+            "node": "Malware & Hash Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Hash Enrichment",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Malware & Hash Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Merge Hash Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Hash Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Has Vulnerability Data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Vulnerability Data?": {
+      "main": [
+        [
+          {
+            "node": "Vulnerability Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Vulnerability Enrichment",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Vulnerability Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Merge Vulnerability Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Vulnerability Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Consolidate Enrichment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidate Enrichment": {
+      "main": [
+        [
+          {
+            "node": "Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "Ollama AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Generate IR Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate IR Report": {
+      "main": [
+        [
+          {
+            "node": "Route by Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Verdict": {
+      "main": [
+        [
+          {
+            "node": "Auto-Block Safeguard Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare L2 Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Auto-Close Benign Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Block Safeguard Check": {
+      "main": [
+        [
+          {
+            "node": "Safe to Auto-Block?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe to Auto-Block?": {
+      "main": [
+        [
+          {
+            "node": "Wazuh Active Response - Block IP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Block Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wazuh Active Response - Block IP": {
+      "main": [
+        [
+          {
+            "node": "Log Block Executed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Block Executed": {
+      "main": [
+        [
+          {
+            "node": "Merge Block Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Block Skipped": {
+      "main": [
+        [
+          {
+            "node": "Merge Block Outcome",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Block Outcome": {
+      "main": [
+        [
+          {
+            "node": "Finalize Report (Critical)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Report (Critical)": {
+      "main": [
+        [
+          {
+            "node": "Slack: Critical Alert",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email: Critical IR Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare L2 Escalation": {
+      "main": [
+        [
+          {
+            "node": "Finalize Report (Suspicious)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Report (Suspicious)": {
+      "main": [
+        [
+          {
+            "node": "Slack: Escalate to L2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email: L2 Review Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Report": {
+      "main": [
+        [
+          {
+            "node": "Slack: Workflow Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "soc-agent-template"
+  }
+}

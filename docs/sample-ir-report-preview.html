@@ -1,0 +1,175 @@
+<div style="font-family:-apple-system,Segoe UI,Arial,sans-serif;max-width:720px;margin:0 auto;background:#FFFFFF;border:1px solid #D8DEE9;">
+
+    <div style="background:#0B2545;color:#FFFFFF;padding:20px 26px;border-top:6px solid #B91C1C;">
+      <div style="font-size:11px;opacity:.75;letter-spacing:.08em;text-transform:uppercase;">Acme Corp &middot; Incident Response Report &middot; TLP:AMBER</div>
+      <div style="font-size:21px;font-weight:700;margin-top:6px;">Multiple authentication failures followed by successful login</div>
+      <div style="font-size:12px;opacity:.85;margin-top:6px;">Alert 1700000000.123456 &middot; Rule 5710 (Level 12) &middot; 2026-09-18T17:16:51.694Z</div>
+    </div>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+
+      <tr><td style="padding:20px 26px;background:#B91C1C;color:#FFFFFF;">
+        <table width="100%" style="border-collapse:collapse;"><tr>
+          <td style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.85;">Overall Severity Score</td>
+        </tr><tr>
+          <td style="font-size:34px;font-weight:800;line-height:1.1;">90<span style="font-size:16px;font-weight:600;opacity:.85;">/100 &mdash; Critical</span></td>
+        </tr></table>
+      </td></tr>
+
+      <tr><td style="padding:18px 26px 0;background:#FDECEC;border-bottom:1px solid #D8DEE9;">
+        <div style="padding-bottom:14px;">
+          <span style="display:inline-block;background:#B91C1C;color:#FFFFFF;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;">Verdict: MALICIOUS</span>
+          <span style="display:inline-block;background:#B91C1C;color:#FFFFFF;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;">AI Confidence: 94%</span>
+          <span style="display:inline-block;background:#1E5AA8;color:#FFFFFF;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;">False Positive: LOW</span>
+          <span style="display:inline-block;background:#B91C1C;color:#FFFFFF;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;">CVSS: 9.8</span>
+          <span style="display:inline-block;background:#0B2545;color:#FFFFFF;padding:4px 10px;border-radius:3px;font-size:11px;font-weight:700;letter-spacing:.02em;margin:2px 6px 2px 0;text-transform:uppercase;">Kill Chain: Execution / Persistence</span>
+        </div>
+      </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#B91C1C;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">0. Executive Summary</h3>
+      </div>
+      
+        <p style="margin:0;font-size:13px;line-height:1.6;color:#111827;">Brute-force SSH login succeeded from a known-malicious hosting IP, followed by execution of a Mirai-family binary. This is an active compromise, not noise.</p>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#0B2545;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">1. Target / Impacted System</h3>
+      </div>
+      
+    <table width="100%" style="border-collapse:collapse;">
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Hostname / Agent</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">prod-db-01 (001)</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Agent IP</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">10.0.1.15</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Asset Criticality</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">CRITICAL ASSET</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Affected User</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">root</code></td></tr>
+    </table>
+    </td></tr>
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#1E5AA8;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">2. IP Reputation &amp; Geo Footprint</h3>
+      </div>
+      
+    <table width="100%" style="border-collapse:collapse;">
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>IP Address</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">185.220.101.45</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Location</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Frankfurt, Hesse Germany</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>ASN / ISP</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">M247 Europe SRL</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Proxy / VPN / Hosting</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">Proxy/VPN detected · Datacenter/hosting IP</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>AbuseIPDB Score</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">97/100 (214 reports)</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Tor Exit Node</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">YES</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Usage Type</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Data Center/Web Hosting/Transit</td></tr>
+    </table>
+    </td></tr>
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#B91C1C;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">3. Vulnerability Details</h3>
+      </div>
+      
+    <table width="100%" style="border-collapse:collapse;">
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>CVE ID</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">CVE-2023-38408</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>CVSS Score</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">9.8 (Critical)</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>CVSS Vector</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Affected Package</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">openssh — installed v8.2p1</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Fix / Remediation</b></td><td style="padding:6px 0;font-size:13px;color:#1E5AA8;">Upgrade openssh to 9.3p2 or later</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Status</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Active</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>References</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><a href="https://nvd.nist.gov/vuln/detail/CVE-2023-38408" style="color:#1E5AA8;">https://nvd.nist.gov/vuln/detail/CVE-2023-38408</a></td></tr>
+    </table>
+    </td></tr>
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#B91C1C;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">4. Malware Analysis</h3>
+      </div>
+      
+    <table width="100%" style="border-collapse:collapse;">
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>SHA256</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">44d88612fea8a8f36de82e1278abb02f</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>File Path</b></td><td style="padding:6px 0;font-size:13px;color:#111827;"><code style="background:#EAF1FB;color:#0B2545;padding:2px 6px;border-radius:3px;font-family:'SF Mono',Consolas,monospace;font-size:12px;">/tmp/.hidden/x86_loader</code></td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Detection Ratio</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">62/72</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>File Type</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">ELF executable</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Threat Classification</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">trojan.linux/mirai</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Known Names</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Mirai.gen, Linux/Trojan.Gafgyt</td></tr>
+      <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Signature</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">unsigned</td></tr>
+    </table>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#1E5AA8;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">5. L1 Triage Analysis</h3>
+      </div>
+      
+        <p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:#111827;">Brute-force SSH login succeeded from a known-malicious hosting IP, followed by execution of a Mirai-family binary. This is an active compromise, not noise.</p>
+        <p style="margin:0;font-size:12px;color:#5B6472;"><b>FP reasoning:</b> Detection is corroborated by 62/72 AV engines, a Tor/hosting-flagged source IP, and a critical unpatched CVE with a matching exploitation pattern.</p>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#1E5AA8;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">6. L2 Deep-Dive Analysis</h3>
+      </div>
+      
+        <p style="margin:0;font-size:13px;line-height:1.65;color:#111827;">The source IP is flagged as a Tor/hosting exit with a 97/100 AbuseIPDB score and 214 reports. The successful login exploited CVE-2023-38408 (CVSS 9.8) in the outdated OpenSSH 8.2p1 build. Post-login, a binary matching known Mirai/Gafgyt signatures (62/72 vendors) was written to /tmp and executed - consistent with botnet recruitment or a staging foothold for further lateral movement given this host's database role.</p>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#0B2545;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">7. MITRE ATT&amp;CK Mapping</h3>
+      </div>
+      
+        <table width="100%" style="border-collapse:collapse;">
+          <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Tactic</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Execution</td></tr>
+          <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Technique</b></td><td style="padding:6px 0;font-size:13px;color:#111827;">Command and Scripting Interpreter (T1059)</td></tr>
+          <tr><td style="padding:6px 14px 6px 0;color:#5B6472;font-size:12px;white-space:nowrap;vertical-align:top;width:170px;"><b>Business Impact</b></td><td style="padding:6px 0;font-size:13px;color:#B91C1C;">Full compromise of a critical production database host; risk of data exfiltration, ransomware staging, or use as a botnet node.</td></tr>
+        </table>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#B91C1C;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">8. Recommendation &amp; Action Required</h3>
+      </div>
+      
+        <ol style="margin:0;padding-left:18px;font-size:13px;line-height:1.8;color:#111827;">
+          <li>Isolate prod-db-01 from the network immediately (critical asset - requires change-approval override)</li><li>Kill the /tmp/.hidden/x86_loader process and preserve the binary for forensic analysis</li><li>Patch OpenSSH to 9.3p2+ across all internet-facing hosts sharing this image</li><li>Rotate all credentials used on this host, including database service accounts</li><li>Hunt for the same file hash and source IP across the fleet</li>
+        </ol>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#1E5AA8;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">9. Response Taken</h3>
+      </div>
+      
+        <p style="margin:0;font-size:13px;color:#0B2545;background:#EAF1FB;border-left:3px solid #1E5AA8;padding:10px 12px;">IP 185.220.101.45 auto-blocked via Wazuh Active Response. Host isolation pending manual approval (critical asset).</p>
+    </td></tr>
+
+      
+    <tr><td style="padding:22px 26px 6px;">
+      <div style="display:flex;align-items:center;margin-bottom:12px;">
+        <div style="width:4px;height:16px;background:#0B2545;margin-right:8px;"></div>
+        <h3 style="margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#0B2545;">10. Analyst Notes</h3>
+      </div>
+      <p style="margin:0;font-size:12px;color:#5B6472;font-style:italic;">Confirm whether prod-db-01 should ever accept direct internet-facing SSH - if not, this also indicates a network segmentation gap.</p>
+    </td></tr>
+
+      <tr><td style="padding:16px 26px;background:#0B2545;">
+        <p style="margin:0;color:#AEB9CC;font-size:11px;">Auto-generated by AI SOC Agent &middot; Acme Corp &middot; Classify per your data handling policy before external distribution.</p>
+      </td></tr>
+    </table>
+  </div>

@@ -1,0 +1,28 @@
+
+
+
+
+# ===== Environment / secrets =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== n8n =====
+.n8n/
+n8n-export/
+
+# ===== OS / editor cruft =====
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# ===== Python (integration scripts) =====
+__pycache__/
+*.pyc
+
+# ===== Logs =====
+*.log
