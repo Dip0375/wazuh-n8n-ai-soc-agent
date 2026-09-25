@@ -18,7 +18,7 @@
 
 ---
 
-## What this is
+## How it works
 
 Wazuh generates alerts. A human SOC analyst normally has to open five browser
 tabs — AbuseIPDB, VirusTotal, NVD, MITRE ATT&CK, and the ticketing tool — just
@@ -63,11 +63,27 @@ unpatched CVE-2023-38408, severity score 90/Critical).
 | 🦠 **Malware analysis** | VirusTotal detection ratio, threat classification, known aliases, file type |
 | 🩹 **Vulnerability / CVSS** | Reads Wazuh's own vulnerability-detector data (CVE, CVSS score+vector, affected package, fix version), cross-referenced against NVD |
 | 🤖 **Local AI L1+L2 analyst** | Ollama-powered verdict, confidence, kill-chain stage, MITRE ATT&CK, business impact, recommended actions — strict JSON output |
-| 🚫 **Safeguarded auto-block** | Never blocks internal IPs, allowlisted IPs, critical assets, or low-confidence calls; global kill switch; every decision is logged with its reason |
+| 🚫 **Safeguarded auto-block** | See [Safeguards](#safeguards) below |
 | 📊 **Composite Severity Score** | A single 0–100 score blending rule level + CVSS + AI confidence, independent of AI confidence and CVSS alone |
 | 📧 **Standard-format IR report** | Numbered sections, Red/Blue/White color system (red reserved strictly for risk signals), sent as HTML email |
 | 💬 **Minimal Slack alerts** | One line per alert — verdict, confidence, rule, asset, CVSS if present — full detail lives in the email |
 | ⚠️ **Workflow-wide error handling** | A dedicated Error Trigger catches any node failure and pages a Slack channel |
+
+## Safeguards
+
+The auto-block branch is the one part of this workflow that can take action
+on its own, so it's deliberately hard to trigger by accident. A block is
+only executed when **every** condition below is true — otherwise the alert
+is escalated to an L2 human instead, and the report records exactly which
+condition stopped it:
+
+- ❌ **Never blocks internal/private IPs** — RFC1918 ranges are hard-excluded (`SOC_INTERNAL_CIDRS`)
+- ❌ **Never blocks explicitly allowlisted IPs** (`SOC_ALLOWLIST_IPS`)
+- ❌ **Never blocks a critical asset** without human approval (`SOC_CRITICAL_ASSETS`)
+- ❌ **Never blocks below 70% AI confidence**
+- ❌ **Never blocks below the critical severity threshold** (`SOC_CRITICAL_THRESHOLD`, default rule level 12)
+- 🔴 **Global kill switch** — `SOC_AUTO_BLOCK_ENABLED=false` disables auto-block entirely, pipeline still runs and escalates everything to L2
+- 📝 **Every decision is logged with its reason**, whether it blocked or didn't — nothing is a silent no-op
 
 ## Repository structure
 
