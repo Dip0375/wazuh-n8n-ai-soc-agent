@@ -43,7 +43,7 @@ leaves your infrastructure to reach a third-party LLM.
 <details>
 <summary><b>Workflow canvas overview</b> (click to expand)</summary>
 <br>
-<img src="docs/images/workflow-canvas-overview.png" alt="n8n canvas overview with sticky-note zones"/>
+<img src="docs/images/workflow-canvas.png" alt="n8n canvas overview with sticky-note zones"/>
 </details>
 
 <details>
