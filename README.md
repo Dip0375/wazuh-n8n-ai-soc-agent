@@ -13,6 +13,7 @@
 [![Wazuh](https://img.shields.io/badge/SIEM-Wazuh-2B65A5)](https://wazuh.com)
 [![Ollama](https://img.shields.io/badge/LLM-Ollama%20(local)-000000)](https://ollama.com)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/Dip0375/wazuh-n8n-ai-soc-agent?style=social)](https://github.com/Dip0375/wazuh-n8n-ai-soc-agent/stargazers)
 
 </div>
 
@@ -34,6 +35,18 @@ to decide whether one alert matters. This workflow automates that first pass:
    L2 review queue, `benign` → auto-closed, no page sent
 6. **IR Report** — a numbered, color-coded (Red/Blue/White) HTML report by
    email, plus a single-line Slack alert
+
+```mermaid
+flowchart LR
+    A[Wazuh alert] --> B[Validate · dedup<br/>severity gate]
+    B --> C[Threat intel<br/>AbuseIPDB · VirusTotal · NVD]
+    C --> D[Local LLM analyst<br/>Ollama · MITRE ATT&CK]
+    D -->|malicious| E[Safeguarded<br/>auto-block]
+    D -->|suspicious| F[L2 review queue]
+    D -->|benign| G[Auto-closed]
+    E --> H[IR report<br/>email + Slack]
+    F --> H
+```
 
 Everything runs locally except the optional threat-intel API calls — no data
 leaves your infrastructure to reach a third-party LLM.
@@ -115,7 +128,7 @@ wazuh-n8n-ai-soc-agent/
 
 ### Install
 ```bash
-git clone https://github.com/dipnarayannandi/wazuh-n8n-ai-soc-agent.git
+git clone https://github.com/Dip0375/wazuh-n8n-ai-soc-agent.git
 cd wazuh-n8n-ai-soc-agent
 cp .env.example .env   # fill in your values, then load them into n8n
 ```
